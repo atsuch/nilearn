@@ -8,6 +8,8 @@ The new minimum required version of scikit-learn is 0.13
 
 - Fix to control the behaviour of cut_coords or number of cuts in plot_stat_map.
   For consistency, number of cuts is changed to default value 7.
+- New fetcher for NeuroVault data.
+  nilearn.datasets.fetch_neurovault
 
 
 0.1.4

@@ -1285,21 +1285,52 @@ def fetch_neurovault(max_images=100,
                      collection_filters=None, image_filters=None,
                      data_dir=None, url=None, resume=True,
                      refresh=False, verbose=1):
-    """Fetch statistical maps.
+    """Fetch public statistical maps from NeuroVault.org.
+
+       Image data downloaded is matched by `collection_filters` and
+       `image_filters`, if specified.
+
+       On each request, even if data are stored locally, this function
+       will requery neurovault for the latest colllections.
+       Metadata for previously queried collections and images, as well
+       as downloaded images, are cached to disk.
+
+       Currently, no check is done to see if a collection or image has
+       changed. To invalidate the cache and download new data, use the
+       `resume=True` flag, with appropriate filters to limit the amount
+       of data being refreshed.
 
     Parameters
     ----------
     max_images: int, optional (default 100)
         Total # of images to download from the database.
-        -1 to download with no restriction.
 
-    collection_filters: dict, optional (default None)
-        filters to send to neurovault API
-        (see http://neurovault.org/api-docs#collapseCollections)
+    collection_filters: list or dict, optional (default None)
+        Filters to limit data retrieval and return via the neurovault API.
+        If a list, each element should be a function that
+            returns True if the collection metadata is a match.
+            Filtering is applied after metadata is downloaded.
+        If a dict, each key-value pair is an API filter.
+            The key will be checked for equality to the value.
+            Keys are applied before metadata download, limiting
+            the number of rows returned and possibly the number
+            of round trips made.
+        (see http://neurovault.org/api-docs#collapseCollections for
+         API keys and collection metadata keys)
 
-    image_filters: dict, optional (default None)
-        filters to send to neurovault API
-        (see http://neurovault.org/api-docs#collapseImages)
+    image_filters: list or dict, optional (default None)
+        Filters to limit data retrieval and return via the neurovault API.
+        If a list, each element should be a function that
+            returns True if the image metadata is a match.
+            Filtering is applied after metadata is downloaded.
+            Matched image metadata will trigger actual image download.
+        If a dict, each key-value pair is an API filter.
+            The key will be checked for equality to the value.
+            Keys are applied before metadata download, limiting
+            the number of rows returned and possibly the number
+            of round trips made.
+        (see http://neurovault.org/api-docs#collapseImages for
+         API keys and collection metadata keys)
 
     data_dir: string, optional (default None)
         Path of the data directory. Used to force data storage in a specified
@@ -1310,33 +1341,31 @@ def fetch_neurovault(max_images=100,
         the data).
 
     refresh: bool, optional (default False)
-        If true, try requerying the database for new results.
+        All metadata
+        If True, try requerying the database for new results.
 
     resume: bool, optional (default True)
-        If true, try resuming download if possible.
+        If True, try resuming download if possible.
 
     verbose: int, optional (default 0)
         Defines the level of verbosity of the output.
-
-    return_raw_data: bool, optional (default True)
-        If false, then the data will transformed into and (X, y) pair, suitable
-        for machine learning routines. X is a list of n_subjects * 48
-        Nifti1Image objects (where 48 is the number of trials),
-        and y is an array of shape (n_subjects * 48,).
-
-    smooth: float, or list of 3 floats, optional (default 0.)
-        Size of smoothing kernel to apply to the loaded zmaps.
 
     Returns
     -------
     data: Bunch
         Dictionary-like object, the interest attributes are :
+        'collections': dict of dicts (one per collection)
+            Metadata about each collection (key: collection ID)
+            See http://neurovault.org/api-docs#collapseCollections
+            for all available fields.
         'func_files': list of strings
             Paths to betamaps.
         'images_meta': list of dicts
-            Metadata of image; parallel array to func_files
-        'collections': dict of dicts (one per collection)
-            Metadata about each collection (key: collection ID)
+            Metadata of image; parallel array to func_files.
+            See http://neurovault.org/api-docs#collapseImages
+            for available fields.
+            Also includes `local_path` (path to downloaded image)
+            and `collection_id` (which indexes into `collections`)
 
     References
     ----------
@@ -1348,7 +1377,6 @@ def fetch_neurovault(max_images=100,
         doi: 10.3389/fninf.2015.00008
     """
     import requests
-    import pandas
 
     if url is None:
         url = "http://neurovault.org/api"
