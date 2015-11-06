@@ -1287,193 +1287,32 @@ def fetch_mixed_gambles(n_subjects=1, data_dir=None, url=None, resume=True,
     return data
 
 
-def _build_nv_url(base_url, filts=None):
-    """Build a NeuroVault URL with the given filters.
-
-    Parameters
-    ----------
-    base_url: string
-        NeuroVault URL (for collections, images, etc.)
-
-    filts: object, optional
-        If filts is a dict, then key-value pairs are added to the
-        querystring of the URL. Otherwise, it is ignored.
-    """
-    if filts and isinstance(filts, dict):
-        url = '?'.join(base_url,
-                       '&'.join(['='.join(it) for it in filts.items()]))
-    else:
-        url = base_url
-    return url
-
-
-def _get_nv_json(url, local_file=None, overwrite=False, verbose=2):
-    """Download NeuroVault json metadata; load/save locally if local_file.
-
-    Parameters
-    ----------
-    url: string
-        URL to download the metadata from.
-
-    local_file: string, optional
-        Path to store the downloaded metadata to.
-
-    overwrite: bool, optional
-        If True, will re-download the data, even if it has been
-        previously downloaded.
-
-    verbose: int, optional
-        Defines the level of verbosity of the output.
-        """
-    opts = dict(overwrite=overwrite)
-
-    if not local_file:
-        # Didnt' request to save locally, but _fetch_files
-        #  requires it. So, dump to a temp location.
-        import tempfile
-        fp, filepath = tempfile.mkstemp()
-        data_dir = os.path.dirname(filepath)
-        filename = os.path.basename(filepath)
-        os.close(fp)  # Avoid any potential conflict
-        opts['overwrite'] = True
-        opts['move'] = filepath
-    else:
-        data_dir = os.path.dirname(local_file)
-        filename = os.path.basename(local_file)
-        opts['move'] = local_file  # make sure
-
-    fil = _fetch_files(data_dir=data_dir,
-                       files=[(filename, url, opts)],
-                       verbose=verbose)  # necessary to get proper url print
-    with io.open(fil[0], 'r', encoding='utf8') as fp:
-        meta = json.load(fp)
-
-    # Cleanup
-    if local_file is None:
-        os.remove(os.path.join(data_dir, filename))
-    return meta
-
-
-def _get_nv_collections_json(url, data_dir, overwrite=False, verbose=2):
-    """Get remote list of collections (don't cache locally).
-
-    If offline, aggregate collections metadata from directories.
-    Result is unfiltered.
-
-    Parameters
-    ----------
-    url: string
-        URL to download the metadata from.
-
-    data_dir: string
-        Path to store the downloaded metadata to.
-
-    overwrite: bool, optional
-        If True, will re-download the data, even if it has been
-        previously downloaded.
-
-    verbose: int, optional
-        Defines the level of verbosity of the output.
-    """
-    try:
-        # Online
-        return _get_nv_json(url, overwrite=overwrite, verbose=verbose)
-    except (_urllib.error.URLError, _urllib.error.HTTPError) as ue:
-        if ue.reason[0] != 8:  # connection error
-            raise
-        elif overwrite:  # must requery... fail.
-            raise
-        print('Working offline...')
-
-    # Sort collections, so same order is achieved online & offline
-    collection_dirs = [os.path.basename(p)
-                       for p in glob.glob(os.path.join(data_dir, '*'))
-                       if os.path.isdir(p)]
-    collection_dirs = sorted(collection_dirs,
-                             lambda k1, k2: int(k1) - int(k2))
-
-    coll_meta = dict(results=[], next=None)
-    for cdir in collection_dirs:
-        coll_meta_path = os.path.join(data_dir, cdir,
-                                      'collection_metadata.json')
-        if os.path.exists(coll_meta_path):
-            with io.open(coll_meta_path, 'r', encoding='utf8') as fp:
-                coll_meta['results'].append(json.load(fp))
-    return coll_meta
-
-
-def _filter_nv_results(results, filts):
-    """Filter NeuroVault metadata.
-
-    Parameters
-    ----------
-    results: object
-        If Iterable, then filts will be applied to each
-        element.
-
-    filts: list
-        List of lambda functions that will be applied to
-        each value in the list of dicts. If the lambda
-        function returns False, the item is discarded.
-    """
-    if isinstance(filts, collections.Iterable):
-        for filt in filts:
-            results = [r for r in results if filt(r)]
-    return results
-
-
-def fetch_neurovault(max_images=np.inf,
-                     exclude_unpublished=False, collection_ids=None,
-                     image_ids=None, image_type=None, map_types=None,
+def fetch_neurovault(max_images=100,
                      collection_filters=None, image_filters=None,
                      data_dir=None, url=None, resume=True,
-                     overwrite=False, verbose=2):
+                     refresh=False, verbose=1):
     """Fetch public statistical maps from NeuroVault.org.
 
        Image data downloaded is matched by `collection_filters` and
        `image_filters`, if specified.
 
        On each request, even if data are stored locally, this function
-       will requery NeuroVault for the latest colllections.
+       will requery neurovault for the latest colllections.
        Metadata for previously queried collections and images, as well
        as downloaded images, are cached to disk.
 
        Currently, no check is done to see if a collection or image has
        changed. To invalidate the cache and download new data, use the
        `resume=True` flag, with appropriate filters to limit the amount
-       of metadata being downloaded.
+       of data being refreshed.
 
     Parameters
     ----------
-    max_images: int, optional (default np.inf)
-        Maximum # of images to download from the database.
-        Useful for testing out filters and analyses if downloads are slow.
-
-    exclude_unpublished: bool, optional (default: False)
-        Exclude any images that belong to a collection without a DOI.
-
-    collection_ids: list, optional (default: None)
-        A list of integer IDs of collections to search for images.
-        Negative IDs are *excluded*.
-        If None, all collections will be searched.
-
-    image_ids: list, optional (default: None)
-        A list of integer IDs of images to download.
-        Negative IDs are *excluded*.
-        If None, all images will be searched.
-
-    image_type: string, optional (default: None)
-        A string of image type to include.
-        These include: "statistic_map". See the NeuroVault
-        website for an update-to-date list.
-
-    map_types: string or list, optional (default: None)
-        A string, or list of strings, of map types to include.
-        These include: "F map", "T map", "Z map". See the NeuroVault
-        website for an update-to-date list.
+    max_images: int, optional (default 100)
+        Total # of images to download from the database.
 
     collection_filters: list or dict, optional (default None)
-        Filters to limit data retrieval and return via the NeuroVault API.
+        Filters to limit data retrieval and return via the neurovault API.
         If a list, each element should be a function that
             returns True if the collection metadata is a match.
             Filtering is applied after metadata is downloaded.
@@ -1486,7 +1325,7 @@ def fetch_neurovault(max_images=np.inf,
          API keys and collection metadata keys)
 
     image_filters: list or dict, optional (default None)
-        Filters to limit data retrieval and return via the NeuroVault API.
+        Filters to limit data retrieval and return via the neurovault API.
         If a list, each element should be a function that
             returns True if the image metadata is a match.
             Filtering is applied after metadata is downloaded.
@@ -1507,8 +1346,9 @@ def fetch_neurovault(max_images=np.inf,
         Override download URL. Used for test only (or if you setup a mirror of
         the data).
 
-    overwrite: bool, optional (default False)
-        If True, re-download cached image metadata and data.
+    refresh: bool, optional (default False)
+        All metadata
+        If True, try requerying the database for new results.
 
     resume: bool, optional (default True)
         If True, try resuming download if possible.
@@ -1524,14 +1364,14 @@ def fetch_neurovault(max_images=np.inf,
             Metadata about each collection (key: collection ID)
             See http://neurovault.org/api-docs#collapseCollections
             for all available fields.
-        'images': list of dicts
+        'func_files': list of strings
+            Paths to betamaps.
+        'images_meta': list of dicts
             Metadata of image; parallel array to func_files.
             See http://neurovault.org/api-docs#collapseImages
             for available fields.
             Also includes `local_path` (path to downloaded image)
             and `collection_id` (which indexes into `collections`)
-        'func_files': list of strings
-            Paths to betamaps.
 
     References
     ----------
@@ -1542,6 +1382,7 @@ def fetch_neurovault(max_images=np.inf,
         brain. Front. Neuroinform. 9:8.
         doi: 10.3389/fninf.2015.00008
     """
+    import requests
 
     if url is None:
         url = "http://neurovault.org/api"

@@ -1,3 +1,18 @@
+
+0.2.1
+=====
+
+Changelog
+---------
+
+Highlights:
+
+- New fetcher for NeuroVault data.
+  nilearn.datasets.fetch_neurovault
+
+Contributors (from ``git shortlog -ns 0.2..0.2.1``)::
+
+
 0.2
 ===
 
