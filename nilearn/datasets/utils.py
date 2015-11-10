@@ -532,15 +532,6 @@ def _fetch_file(url, data_dir, resume=True, overwrite=False,
         if verbose > 0:
             # Complete the reporting hook
             sys.stderr.write(' ...done. (%i seconds, %i min)\n' % (dt, dt // 60))
-    except (_urllib.error.HTTPError, _urllib.error.URLError) as e:
-        if 'Error while fetching' not in str(e):
-            # For some odd reason, the error message gets doubled up
-            #   (possibly from the re-raise), so only add extra info
-            #   if it's not already there.
-            e.reason = ("%s| Error while fetching file %s; "
-                          "dataset fetching aborted." % (
-                            str(e.reason), file_name))
-        raise
     finally:
         if local_file is not None:
             if not local_file.closed:
