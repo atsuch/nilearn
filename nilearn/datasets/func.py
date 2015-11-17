@@ -1283,7 +1283,17 @@ def fetch_mixed_gambles(n_subjects=1, data_dir=None, url=None, resume=True,
 
 
 def _build_nv_url(base_url, filts=None):
-    """Build a Neurovault URL with the given filters."""
+    """Build a Neurovault URL with the given filters.
+
+    Parameters
+    ----------
+    base_url: string
+        Neurovault URL (for collections, images, etc.)
+
+    filts: object, optional
+        If filts is a dict, then key-value pairs are added to the
+        querystring of the URL. Otherwise, it is ignored.
+    """
     if filts and isinstance(filts, dict):
         url = '?'.join(base_url,
                        '&'.join(['='.join(it) for it in filts.items()]))
@@ -1293,7 +1303,23 @@ def _build_nv_url(base_url, filts=None):
 
 
 def _get_nv_json(url, local_file=None, overwrite=False, verbose=2):
-    """Download NeuroVault json metadata; load/save locally if local_file"""
+    """Download NeuroVault json metadata; load/save locally if local_file.
+
+    Parameters
+    ----------
+    url: string
+        URL to download the metadata from.
+
+    local_file: string, optional
+        Path to store the downloaded metadata to.
+
+    overwrite: bool, optional
+        If True, will re-download the data, even if it has been
+        previously downloaded.
+
+    verbose: int, optional
+        Defines the level of verbosity of the output.
+        """
     opts = dict(overwrite=overwrite)
 
     if not local_file:
@@ -1328,6 +1354,21 @@ def _get_nv_collections_json(url, data_dir, overwrite=False, verbose=2):
 
     If offline, aggregate collections metadata from directories.
     Result is unfiltered.
+
+    Parameters
+    ----------
+    url: string
+        URL to download the metadata from.
+
+    data_dir: string
+        Path to store the downloaded metadata to.
+
+    overwrite: bool, optional
+        If True, will re-download the data, even if it has been
+        previously downloaded.
+
+    verbose: int, optional
+        Defines the level of verbosity of the output.
     """
     try:
         # Online
@@ -1361,8 +1402,14 @@ def _filter_nv_results(results, filts):
 
     Parameters
     ----------
-    filts: list
+    results: object
+        If Iterable, then filts will be applied to each
+        element.
 
+    filts: list
+        List of lambda functions that will be applied to
+        each value in the list of dicts. If the lambda
+        function returns False, the item is discarded.
     """
     if isinstance(filts, collections.Iterable):
         for filt in filts:
