@@ -22,23 +22,27 @@ uses.
 
 **Classes**:
 
-.. currentmodule:: nilearn.connectome.connectivity_matrices
+.. currentmodule:: nilearn.connectome
 
 .. autosummary::
    :toctree: generated/
    :template: class.rst
    
    ConnectivityMeasure
+   GroupSparseCovariance
+   GroupSparseCovarianceCV
 
 **Functions**:
 
-.. currentmodule:: nilearn.connectome.connectivity_matrices
+.. currentmodule:: nilearn.connectome
 
 .. autosummary::
    :toctree: generated/
    :template: function.rst
 
    sym_to_vec
+   group_sparse_covariance
+
 .. _datasets_ref:
 
 :mod:`nilearn.datasets`: Automatic Dataset Fetching
@@ -195,7 +199,7 @@ uses.
    compute_multi_epi_mask
    compute_background_mask
    compute_multi_background_mask
-   intersect_mask
+   intersect_masks
    apply_mask
    unmask
 
@@ -305,6 +309,7 @@ uses.
    :template: function.rst
 
    clean
+   high_variance_confounds
 
 
 
