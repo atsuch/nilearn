@@ -9,6 +9,7 @@ import io
 import os
 import re
 import warnings
+from itertools import chain
 
 import numpy as np
 import nibabel
@@ -1287,10 +1288,149 @@ def fetch_mixed_gambles(n_subjects=1, data_dir=None, url=None, resume=True,
     return data
 
 
-def fetch_neurovault(max_images=100,
-                     collection_filters=None, image_filters=None,
-                     data_dir=None, url=None, resume=True,
-                     refresh=False, verbose=1):
+def _build_nv_url(base_url, filts=None):
+    """Build a NeuroVault URL with the given filters.
+
+    Parameters
+    ----------
+    base_url: string
+        NeuroVault URL (for collections, images, etc.)
+
+    filts: object, optional
+        If filts is a dict, then key-value pairs are added to the
+        querystring of the URL. Otherwise, it is ignored.
+    """
+    if filts and isinstance(filts, dict):
+        url = '?'.join(base_url,
+                       '&'.join(['='.join(it) for it in filts.items()]))
+    else:
+        url = base_url
+    return url
+
+
+def _get_nv_json(url, local_file=None, overwrite=False, verbose=2):
+    """Download NeuroVault json metadata; load/save locally if local_file.
+
+    Parameters
+    ----------
+    url: string
+        URL to download the metadata from.
+
+    local_file: string, optional
+        Path to store the downloaded metadata to.
+
+    overwrite: bool, optional
+        If True, will re-download the data, even if it has been
+        previously downloaded.
+
+    verbose: int, optional
+        Defines the level of verbosity of the output.
+        """
+    opts = dict(overwrite=overwrite)
+
+    if not local_file:
+        # Didnt' request to save locally, but _fetch_files
+        #  requires it. So, dump to a temp location.
+        import tempfile
+        fp, filepath = tempfile.mkstemp()
+        data_dir = os.path.dirname(filepath)
+        filename = os.path.basename(filepath)
+        os.close(fp)  # Avoid any potential conflict
+        opts['overwrite'] = True
+        opts['move'] = filepath
+    else:
+        data_dir = os.path.dirname(local_file)
+        filename = os.path.basename(local_file)
+        opts['move'] = local_file  # make sure
+
+    fil = _fetch_files(data_dir=data_dir,
+                       files=[(filename, url, opts)],
+                       verbose=verbose)  # necessary to get proper url print
+    with io.open(fil[0], 'r', encoding='utf8') as fp:
+        meta = json.load(fp)
+
+    # Cleanup
+    if local_file is None:
+        os.remove(os.path.join(data_dir, filename))
+    return meta
+
+
+def _get_nv_collections_json(url, data_dir, overwrite=False, verbose=2):
+    """Get remote list of collections (don't cache locally).
+
+    If offline, aggregate collections metadata from directories.
+    Result is unfiltered.
+
+    Parameters
+    ----------
+    url: string
+        URL to download the metadata from.
+
+    data_dir: string
+        Path to store the downloaded metadata to.
+
+    overwrite: bool, optional
+        If True, will re-download the data, even if it has been
+        previously downloaded.
+
+    verbose: int, optional
+        Defines the level of verbosity of the output.
+    """
+    try:
+        # Online
+        return _get_nv_json(url, overwrite=overwrite, verbose=verbose)
+    except (_urllib.error.URLError, _urllib.error.HTTPError) as ue:
+        if ue.reason[0] != 8:  # connection error
+            raise
+        elif overwrite:  # must requery... fail.
+            raise
+        print('Working offline...')
+
+    # Sort collections, so same order is achieved online & offline
+    collection_dirs = [os.path.basename(p)
+                       for p in glob.glob(os.path.join(data_dir, '*'))
+                       if os.path.isdir(p)]
+    collection_dirs = sorted(collection_dirs,
+                             lambda k1, k2: int(k1) - int(k2))
+
+    coll_meta = dict(results=[], next=None)
+    for cdir in collection_dirs:
+        coll_meta_path = os.path.join(data_dir, cdir,
+                                      'collection_metadata.json')
+        if os.path.exists(coll_meta_path):
+            with io.open(coll_meta_path, 'r', encoding='utf8') as fp:
+                coll_meta['results'].append(json.load(fp))
+    return coll_meta
+
+
+def _filter_nv_results(results, filts):
+    """Filter NeuroVault metadata.
+
+    Parameters
+    ----------
+    results: object
+        If Iterable, then filts will be applied to each
+        element.
+
+    filts: list
+        List of lambda functions that will be applied to
+        each value in the list of dicts. If the lambda
+        function returns False, the item is discarded.
+    """
+    if isinstance(filts, collections.Iterable):
+        for filt in filts:
+            results = [r for r in results if filt(r)]
+    return results
+
+
+def fetch_neurovault(max_images=np.inf,
+                     exclude_unpublished=False,
+                     exclude_known_bad_images=True,
+                     collection_ids=(),
+                     image_ids=(), image_type=None, map_types=(),
+                     collection_filters=(), image_filters=(),
+                     data_dir=None, url="http://neurovault.org/api",
+                     resume=True, overwrite=False, verbose=2):
     """Fetch public statistical maps from NeuroVault.org.
 
        Image data downloaded is matched by `collection_filters` and
@@ -1308,8 +1448,37 @@ def fetch_neurovault(max_images=100,
 
     Parameters
     ----------
-    max_images: int, optional (default 100)
-        Total # of images to download from the database.
+    max_images: int, optional (default np.inf)
+        Maximum # of images to download from the database.
+        Useful for testing out filters and analyses if downloads are slow.
+
+    exclude_unpublished: bool, optional (default: False)
+        Exclude any images that belong to a collection without a DOI.
+
+    exclude_known_bad_images: bool
+        Append filters to remove known bad collections,
+        image ids, and images with parameter values that
+        indicate the data are not useful.
+
+    collection_ids: list, optional (default: None)
+        A list of integer IDs of collections to search for images.
+        Negative IDs are *excluded*.
+        If None, all collections will be searched.
+
+    image_ids: list, optional (default: None)
+        A list of integer IDs of images to download.
+        Negative IDs are *excluded*.
+        If None, all images will be searched.
+
+    image_type: string, optional (default: None)
+        A string of image type to include.
+        These include: "statistic_map". See the NeuroVault
+        website for an update-to-date list.
+
+    map_types: string or list, optional (default: None)
+        A string, or list of strings, of map types to include.
+        These include: "F map", "T map", "Z map". See the NeuroVault
+        website for an update-to-date list.
 
     collection_filters: list or dict, optional (default None)
         Filters to limit data retrieval and return via the neurovault API.
@@ -1384,34 +1553,53 @@ def fetch_neurovault(max_images=100,
     """
     import requests
 
-    if url is None:
-        url = "http://neurovault.org/api"
-    if collection_filters is None:
-        collection_filters = []
-    if image_filters is None:
-        image_filters = []
+    # Massage parameters, convert into image filters.
+    if exclude_known_bad_images:
+        bad_collects = [16]
+        bad_image_ids = [
+            96, 97, 98,                    # The following maps are not brain maps
+            338, 339,                      # And the following are crap
+            335,                           # 335 is a duplicate of 336
+            3360, 3362, 3364,              # These are mean images, and not Z maps
+            1202, 1163, 1931, 1101, 1099]  # Ugly / obviously not Z maps
+        collection_ids = chain(collection_ids, [-bid for bid in bad_collects])
+        image_ids = chain(image_ids, [-bid for bid in bad_image_ids])
+        image_filters = chain(image_filters,
+                              [lambda im: im.get('perc_bad_voxels', 0) < 100,
+                               lambda im: im.get('brain_coverage', 100) > 0])
     if exclude_unpublished:
-        collection_filters.append(lambda col: col.get('DOI') is not None)
+        collection_filters = chain(collection_filters,
+                                   [lambda col: col.get('DOI') is not None])
     if collection_ids:  # positive: include; negative: exclude
+        collection_ids = tuple(collection_ids)  # consume more than once
         _pos_col_ids = [cid for cid in collection_ids if cid >= 0]
-        if _pos_col_ids:
-            collection_filters.append(lambda col: col.get('id') in _pos_col_ids)
         _neg_col_ids = [-cid for cid in collection_ids if cid < 0]
+        if _pos_col_ids:
+            collection_filters = chain(collection_filters,
+                                       [lambda c: c.get('id') in _pos_col_ids])
         if _neg_col_ids:
-            collection_filters.append(lambda col: col.get('id') not in _neg_col_ids)
+            collection_filters = chain(collection_filters,
+                                       [lambda c: c.get('id') not in _neg_col_ids])
     if image_ids:  # positive: include; negative: exclude
+        image_ids = tuple(image_ids)  # consume more than once
         _pos_im_ids = [iid for iid in image_ids if iid >= 0]
-        if _pos_im_ids:
-            image_filters.append(lambda im: im.get('id') in _pos_im_ids)
         _neg_im_ids = [-iid for iid in image_ids if iid < 0]
+        if _pos_im_ids:
+            image_filters = chain(image_filters,
+                                  [lambda im: im.get('id') in _pos_im_ids])
         if _neg_im_ids:
-            image_filters.append(lambda im: im.get('id') not in _neg_im_ids)
+            image_filters = chain(image_filters,
+                                  [lambda im: im.get('id') not in _neg_im_ids])
     if image_type:
-        image_filters.append(lambda im: im.get('image_type') == image_type)
+        image_filters = chain(image_filters,
+                              [lambda im: im.get('image_type') == image_type])
     if map_types and isinstance(map_types, _basestring):
         map_types = [map_types]
     if map_types:
-        image_filters.append(lambda im: im.get('map_type') in map_types)
+        image_filters = chain(image_filters,
+                              [lambda im: im.get('map_type') in map_types])
+    image_filters = tuple(image_filters)  # convert to tuples, we need to consume
+    collection_filters = tuple(collection_filters)  # these filters many times.
     data_dir = _get_dataset_dir('neurovault', data_dir=data_dir)
 
     collects = dict()
