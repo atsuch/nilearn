@@ -1726,8 +1726,6 @@ def fetch_neurovault(max_images=np.inf,
 
                 good_images = _filter_nv_results(results=all_images,
                                                  filts=image_filters)
-                if len(good_images) == 0:
-                    continue
 
                 # Finally, we have images to download.
                 # 2. Save off collection and image metadata.
