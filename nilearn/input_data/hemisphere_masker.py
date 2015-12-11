@@ -62,7 +62,7 @@ class HemisphereMasker(NiftiMasker):
 
         xvals = hemi_mask_data.shape[0]
         midpt = np.ceil(xvals / 2.)
-        if self.hemi == 'l':
+        if self.hemi == 'r':
             other_hemi_slice = slice(midpt, xvals)
         else:
             other_hemi_slice = slice(0, midpt)
