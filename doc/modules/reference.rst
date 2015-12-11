@@ -224,6 +224,16 @@ uses.
    img_to_signals_maps
    signals_to_img_maps
 
+**Classes**:
+
+.. currentmodule:: nilearn.regions
+
+.. autosummary::
+   :toctree: generated/
+   :template: class.rst
+
+    RegionExtractor   
+
 
 .. seealso::
 
