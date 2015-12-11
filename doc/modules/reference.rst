@@ -150,7 +150,7 @@ uses.
    reorder_img
    smooth_img
    swap_img_hemispheres
-
+   threshold_img
 
 .. _io_ref:
 
